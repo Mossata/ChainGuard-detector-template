@@ -1,0 +1,11 @@
+{
+  "address": "0x0000000000000000000000000000000000000001",
+  "chain": "ethereum",
+  "queried_at": "2026-09-18T00:00:00Z",
+  "contract": {"is_contract": true, "verified_source": false},
+  "tx_history": [],
+  "tokens": [],
+  "liquidity": [{"pool_address": "demo-pool", "liquidity_usd": 0,
+    "liquidity_events": [{"type": "remove", "amount_usd": 10000}]}],
+  "fetcher_provenance": {}
+}

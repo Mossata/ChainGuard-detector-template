@@ -1,19 +1,14 @@
-"""Replace this stub with your detector implementation."""
-
-try:
-    from .schema import AddressContext, DetectionResult
-except ImportError:
-    from schema import AddressContext, DetectionResult
+"""Implement your detector here; no ChainGuard installation is required."""
+from schema import AddressContext, DetectionResult
 
 
 def detect(context: AddressContext) -> DetectionResult:
-    """Return the shared contract; the CLI does not invoke this stub."""
+    """Call a package, CLI, or model and normalize its result here.
+
+    Context can be partial. Missing data does not mean an address is safe.
+    See examples/heuristic.py for a demonstration implementation.
+    """
     return DetectionResult(
-        label="insufficient_evidence",
-        risk_type="unknown",
-        confidence=0.0,
-        evidence=[{
-            "description": "No detection algorithm has been implemented in this template.",
-            "weight": 0.0,
-        }],
+        label="insufficient_evidence", risk_type="unknown", confidence=0.0,
+        evidence=[{"description": "No detector has been implemented.", "weight": 0.0}],
     )
