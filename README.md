@@ -169,6 +169,59 @@ a separate task. This starter kit does not add those capabilities to ChainGuard.
 The previous `/analyse`, `/configuration`, and `/resolve-contract-address`
 routes have been removed; input fetching/resolution belongs in the caller.
 
+## External API wrapper examples: Honeypot and RugCheck
+
+These examples illustrate response normalization behind the template API. For
+an existing API, the intended default is for ChainGuard's **generic connector**
+to call it directly using configured request/auth/response mappings. A wrapper
+is useful if translation requires conditional logic the generic mapper cannot
+express, or if you want one standard API contract. Both paths fit the architecture;
+wrapping an existing API is optional. The generic connector is separate app work.
+
+To try a wrapper, replace `detector.py` with **one** of these imports and restart:
+
+```python
+from examples.honeypot import detect
+```
+
+```python
+from examples.rugcheck import detect
+```
+
+Install `requirements.txt` again if your environment does not have `httpx`.
+Send a real **token** address to `/detect`, not a wallet address:
+
+```json
+{"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "chain": "ethereum"}
+```
+
+For the RugCheck example, send a Solana token mint and explicitly use
+`"chain": "solana"`. This does not add Solana resolution/fetchers to ChainGuard.
+The Honeypot example intentionally supports Ethereum only, and sends `chainID=1`
+instead of letting the provider guess the network. Configure either wrapper in
+ChainGuard as `mode: template`, `required_input_type: address`,
+`is_llm_based: false`; point the endpoint at **your wrapper's** `/detect` URL.
+
+Mapping policy (inspect/change `map_result()` for your integration):
+
+- Honeypot `isHoneypot: true` maps to `scam` / `honeypot`. False or missing maps
+  to `insufficient_evidence`: absence of a honeypot is not absence of all scams.
+  A verdict may exist even when simulation failed, so the adapter uses the
+  explicit verdict rather than relying on `simulationSuccess` alone.
+- RugCheck `danger` findings map to `scam` / `token_risk` by an **example local
+  policy**, not a provider-confirmed scam/rug-pull verdict. Other findings remain
+  `insufficient_evidence`; all risk descriptions and levels are kept as evidence.
+- Neither adapter derives confidence from risk scores. `confidence` and evidence
+  `weight` are `0.0` placeholders for unavailable values, not calibrated estimates.
+  A future shared contract could represent unavailable confidence as `null`.
+- HTTP errors, timeouts, invalid JSON and malformed fields raise exceptions,
+  which the wrapper reports as HTTP 500. They are not successful safe verdicts.
+  Unsupported chains/invalid address syntax also fail before a network request.
+
+No prompts, JSON file writes, folder clearing, or network calls occur on import.
+Provider references: [Honeypot API](https://docs.honeypot.is/ishoneypot) and
+[RugCheck API schema](https://api.rugcheck.xyz/swagger/doc.json).
+
 ## Test
 
 ```powershell
