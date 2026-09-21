@@ -28,12 +28,13 @@ Use `curl` instead of `curl.exe` on Linux/macOS. The initial stub returns
 
 ## Implement your detector
 
-The only application code you need to edit is `detector.py`:
+The only application code you need to edit is `detector.py`. Non-LLM custom
+detectors are the default:
 
 ```python
 from schema import AddressContext, DetectionResult
 
-def detect(context: AddressContext) -> DetectionResult:
+def detect_custom(context: AddressContext) -> DetectionResult:
     # Invoke your algorithm and translate its output here.
     return DetectionResult(
         label="insufficient_evidence", risk_type="unknown",
@@ -46,10 +47,10 @@ weights or configuration it needs. Synchronous detector calls run in FastAPI's
 worker thread pool. Your implementation should be safe for concurrent calls;
 serialize access inside the adapter if your model requires it.
 
-For a working demonstration, replace the contents of `detector.py` with:
+For a working demonstration, replace the `detect_custom` implementation with:
 
 ```python
-from examples.heuristic import detect
+from examples.heuristic import detect as detect_custom
 ```
 
 Restart the server and send `examples/context.json` again. It returns `scam`
@@ -57,6 +58,11 @@ with risk type `rug_pull` when an explicitly unverified contract has a pool
 with zero liquidity and a recorded removal event. Otherwise it returns
 `insufficient_evidence`. This is illustrative logic, not a validated model;
 it does not establish the timing or percentage of a liquidity removal.
+
+The wrapper calls `detect_custom()` by default, so users who do not want an LLM
+can keep their own algorithm, package, CLI, or detector configuration there.
+Set `DETECTOR_MODE=custom` explicitly if preferred. The JSON registration file
+is consumed by ChainGuard and does not need to contain LLM settings.
 
 ### Package or source code
 
@@ -96,6 +102,56 @@ inference in `detect()`, then translate its prediction and evidence to the
 standard result. Document required weights, hardware, and dependencies in your
 copy of this README. Python detector execution has no built-in hard timeout;
 configure HTTP timeouts in the caller and bound expensive work in your adapter.
+
+### User-owned LLM or Lambda
+
+`is_llm_based` is registration metadata for ChainGuard. To use a user-owned
+LLM, expose it over HTTPS (for example, API Gateway invoking a Lambda), then
+set the wrapper mode to LLM:
+
+Configure the wrapper process with server-side environment variables before
+starting it:
+
+```powershell
+$env:LLM_DETECTOR_ENDPOINT = "https://example.execute-api.us-east-1.amazonaws.com/prod/detect"
+$env:LLM_DETECTOR_API_KEY = "replace-with-a-secret"
+$env:LLM_DETECTOR_TIMEOUT = "30"
+$env:DETECTOR_MODE = "llm"
+python app.py
+```
+
+The adapter sends the same `AddressContext` JSON that ChainGuard sent to
+`/detect`. The Lambda response must be a JSON object with `label`, `risk_type`,
+`confidence`, and `evidence`, plus optional `explanation`. The adapter validates
+that response and returns HTTP 500 for an unavailable endpoint or malformed
+model output; it never converts an LLM failure into a safe verdict.
+
+See `examples/lambda_handler.py` for an API Gateway event handler. Replace its
+`invoke_user_llm()` function with the user's model call and map the model output
+to the standard result fields before returning it.
+
+Register the wrapper endpoint in ChainGuard, not the Lambda endpoint, and set
+`is_llm_based` to `true` because this detector supplies its own explanation:
+
+```json
+{
+  "enabled": true,
+  "name": "MyCustomLLMDetector",
+  "endpoint": "https://your-wrapper.example.com/detect",
+  "mode": "template",
+  "required_input_type": "address_with_context",
+  "is_llm_based": true
+}
+```
+
+The Lambda should authenticate the wrapper separately (for example with an API
+key, IAM-backed API Gateway authorization, or a signed request). Do not put its
+secret in `detector_config.json` or in the request context. If the LLM returns
+a provider-specific shape, map it in `detector.py` or in the Lambda before
+returning the result.
+
+When `DETECTOR_MODE` is omitted or set to `custom`, the LLM endpoint is never
+called and `detect_custom()` handles the request instead.
 
 ## Contract
 
