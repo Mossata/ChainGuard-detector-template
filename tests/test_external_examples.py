@@ -10,6 +10,23 @@ EVM = AddressContext(address="0x" + "1" * 40, chain="ethereum")
 SOL = AddressContext(address="So11111111111111111111111111111111111111112", chain="solana")
 
 
+def test_health_and_default_detection(monkeypatch):
+    monkeypatch.setenv("DETECTOR_MODE", "custom")
+    monkeypatch.delenv("DETECTOR_API_KEY", raising=False)
+    with TestClient(app.app) as client:
+        health = client.get("/health")
+        response = client.post("/detect", json={"address": EVM.address})
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert response.status_code == 200
+    result = DetectionResult.model_validate(response.json())
+    assert result.label == "insufficient_evidence"
+    assert result.risk_type == "unknown"
+    assert result.confidence == 0.0
+    assert result.evidence == []
+
+
 @pytest.mark.parametrize("payload,label", [
     ({"honeypotResult": {"isHoneypot": True}}, "scam"),
     ({"honeypotResult": {"isHoneypot": False}}, "insufficient_evidence"),

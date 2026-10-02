@@ -23,8 +23,67 @@ curl.exe -X POST http://127.0.0.1:9000/detect -H "Content-Type: application/json
 ```
 
 Use `curl` instead of `curl.exe` on Linux/macOS. The initial stub returns
-`insufficient_evidence` with a message that no detector has been implemented.
+`insufficient_evidence` with zero confidence until you implement a detector.
 `GET /health` returns `{"status":"ok"}` without executing the algorithm.
+The local server listens on `127.0.0.1:9000` by default.
+
+## Docker development
+
+Build the service image from this repository:
+
+```sh
+docker build -t chainguard-detector .
+```
+
+Run the image without a source mount:
+
+```sh
+docker run --rm -p 9000:9000 chainguard-detector
+```
+
+The container starts `python app.py`, listens on `0.0.0.0:9000`, and has a
+Docker health check against `GET /health`. Test it at
+`http://127.0.0.1:9000/health` or send the example context to `/detect` using
+the curl command above.
+
+To work from a fork or another local clone, mount the whole repository at
+`/app`. The mounted files take precedence over the copies in the image, so
+ChainGuard runs your local `detector.py` without rebuilding the image for each
+code change:
+
+```sh
+docker run --rm -p 9000:9000 -v "$PWD:/app" chainguard-detector
+```
+
+In PowerShell, use:
+
+```powershell
+docker run --rm -p 9000:9000 --mount "type=bind,source=$($PWD.Path),target=/app" chainguard-detector
+```
+
+The service imports detector code at startup. Restart the container after
+editing Python files; automatic reload is not enabled. If the fork adds Python
+dependencies, rebuild the image after updating `requirements.txt` so they are
+installed. The mount executes code from the local repository you chose; the
+service does not fetch or execute remote detector code. Do not put credentials
+in the image.
+
+The intended relationship is:
+
+```text
+ChainGuard -> Docker Compose -> detector container -> user's mounted local detector repository
+```
+
+Configure ChainGuard's endpoint as `http://127.0.0.1:9000/detect` when its
+backend runs directly on the host. When both services run in Docker Compose,
+use the detector service name instead, for example
+`http://detector:9000/detect`; `localhost` inside the ChainGuard container would
+refer to ChainGuard itself. Ensure the local repository path is mounted into the
+detector service at `/app`.
+
+The current API provides `GET /health` and `POST /detect`. There is no `/analyse`
+route in this repository. `GET /docs` is also available for interactive API
+exploration.
 
 ## Implement your detector
 
@@ -187,11 +246,11 @@ Then send `X-API-Key` on `/detect` requests. Missing/wrong keys return 401.
 The health endpoint and API docs remain public. Environment variables are read
 directly; `.env` files are not automatically loaded.
 
-`HOST` defaults to `127.0.0.1`; `PORT` defaults to `9000`. Set `HOST=0.0.0.0`
-when the process must accept remote/container traffic. Deploy this folder with
-its Python dependencies and detector assets; configure HTTPS at your hosting
-service or reverse proxy. ChainGuard must be able to reach the deployed URL;
-`localhost` refers to the caller's own machine/container.
+`HOST` defaults to `127.0.0.1`; `PORT` defaults to `9000`. The Docker image sets
+`HOST=0.0.0.0` so other containers can reach it. For non-Docker remote
+deployment, set `HOST=0.0.0.0` and configure HTTPS at your hosting service or
+reverse proxy. ChainGuard must be able to reach the deployed URL; `localhost`
+refers to the caller's own machine/container.
 
 ## Configure in ChainGuard
 
