@@ -1,345 +1,277 @@
-# ChainGuard detector starter kit
+﻿# ChainGuard external detector template
 
-Run your detector as an independent HTTP service. ChainGuard sends input to
-`POST /detect`; this wrapper calls your algorithm and returns a `DetectionResult`.
-It does not call ChainGuard's LLMs, fetchers, or backend.
+Turn your detection algorithm into a separate service that ChainGuard can call. ChainGuard sends an Ethereum address and, optionally, blockchain evidence to `POST /detect`; this template runs your code and returns a validated risk assessment.
 
-## Run
+**The initial detector is a placeholder.** It always returns `insufficient_evidence` with confidence `0.0`. Starting the server proves the interface works, not that it can detect scams. Implement your algorithm before relying on its results.
 
-Requires Python 3.10 or newer. Download/copy this entire folder, then run inside it:
+This template is separate from the [local LLM hosting template](../ChainGuard-localLLM-template/README.md), which runs models for ChainGuard's AI agents. You can use either or both. An external detector does not replace the AI provider that interprets chat requests.
+
+## What you need
+
+- This complete repository, including `app.py`, `detector.py`, `schema.py`, and the dependency files.
+- Either Docker, or Python 3.12 (matching the Docker image; Python 3.10+ is supported by this template).
+- A running ChainGuard app when you are ready to connect it. See the [main app guide](../ChainGuard/README.md).
+
+An **API** lets programs exchange requests. An **endpoint** is its URL. The detector endpoint ends in `/detect`; `/health` checks that the server is alive, and `/docs` provides an interactive test page. A **schema** defines the fields a request or response must contain.
+
+Commands use Windows PowerShell. On macOS/Linux, use `.venv/bin/python` instead of `.venv\Scripts\python`, and `curl` instead of `curl.exe`.
+
+## 1. Start the detector
+
+If you do not have the repository yet, run these commands from your projects folder:
+
+```powershell
+git clone https://github.com/Mossata/ChainGuard-detector-template.git
+cd ChainGuard-detector-template
+```
+
+### With ChainGuard's Docker setup
+
+If you followed ChainGuard's Docker guide, this service is already started. Keep the repositories beside one another:
+
+```text
+ProjectFiles/
+  ChainGuard/
+  ChainGuard-detector-template/
+```
+
+ChainGuard's root `.env` should contain `DETECTOR_PATH=../ChainGuard-detector-template`. Run from `ChainGuard/`:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+ChainGuard builds the detector from this repository's Dockerfile and mounts its source at `/app`. You do not need another detector process on port 9000.
+
+### Without Docker
+
+Open a terminal in `ChainGuard-detector-template/`:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python app.py
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python app.py
 ```
 
-On Linux/macOS activate with `source .venv/bin/activate` instead.
-Open http://127.0.0.1:9000/docs for the interactive API, or try:
+Keep the terminal running. The default address is `http://127.0.0.1:9000`. No activation script is required because the commands use the environment's Python directly.
+
+### Standalone Docker alternative
+
+To run only the detector, from this repository:
+
+```powershell
+docker build -t chainguard-detector .
+docker run --rm --name chainguard-detector -p 127.0.0.1:9000:9000 chainguard-detector
+```
+
+Keep the terminal running. This image contains a copy of the source; rebuild it after changes. Do not run this alongside another service already using port 9000.
+
+## 2. Check the interface
+
+Open **http://127.0.0.1:9000/health**. Expect `{"status":"ok"}`. This does not execute the algorithm.
+
+In a second terminal in the template folder, send the included example evidence:
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:9000/detect -H "Content-Type: application/json" --data-binary "@examples/context.json"
 ```
 
-Use `curl` instead of `curl.exe` on Linux/macOS. The initial stub returns
-`insufficient_evidence` with zero confidence until you implement a detector.
-`GET /health` returns `{"status":"ok"}` without executing the algorithm.
-The local server listens on `127.0.0.1:9000` by default.
+The unchanged template returns:
 
-## Docker development
-
-Build the service image from this repository:
-
-```sh
-docker build -t chainguard-detector .
+```json
+{
+  "label": "insufficient_evidence",
+  "risk_type": "unknown",
+  "confidence": 0.0,
+  "evidence": []
+}
 ```
 
-Run the image without a source mount:
+Alternatively, open **http://127.0.0.1:9000/docs**, expand **POST /detect**, click **Try it out**, enter a request, and click **Execute**. Opening `/detect` directly in a browser sends GET and returns 405; it needs POST.
 
-```sh
-docker run --rm -p 9000:9000 chainguard-detector
-```
+## 3. Implement your detector
 
-The container starts `python app.py`, listens on `0.0.0.0:9000`, and has a
-Docker health check against `GET /health`. Test it at
-`http://127.0.0.1:9000/health` or send the example context to `/detect` using
-the curl command above.
-
-To work from a fork or another local clone, mount the whole repository at
-`/app`. The mounted files take precedence over the copies in the image, so
-ChainGuard runs your local `detector.py` without rebuilding the image for each
-code change:
-
-```sh
-docker run --rm -p 9000:9000 -v "$PWD:/app" chainguard-detector
-```
-
-In PowerShell, use:
-
-```powershell
-docker run --rm -p 9000:9000 --mount "type=bind,source=$($PWD.Path),target=/app" chainguard-detector
-```
-
-The service imports detector code at startup. Restart the container after
-editing Python files; automatic reload is not enabled. If the fork adds Python
-dependencies, rebuild the image after updating `requirements.txt` so they are
-installed. The mount executes code from the local repository you chose; the
-service does not fetch or execute remote detector code. Do not put credentials
-in the image.
-
-The intended relationship is:
-
-```text
-ChainGuard -> Docker Compose -> detector container -> user's mounted local detector repository
-```
-
-Configure ChainGuard's endpoint as `http://127.0.0.1:9000/detect` when its
-backend runs directly on the host. When both services run in Docker Compose,
-use the detector service name instead, for example
-`http://detector:9000/detect`; `localhost` inside the ChainGuard container would
-refer to ChainGuard itself. Ensure the local repository path is mounted into the
-detector service at `/app`.
-
-The current API provides `GET /health` and `POST /detect`. There is no `/analyse`
-route in this repository. `GET /docs` is also available for interactive API
-exploration.
-
-## Implement your detector
-
-The only application code you need to edit is `detector.py`. Non-LLM custom
-detectors are the default:
+Edit **`detect_custom()` in `detector.py`**. It receives an `AddressContext` object containing the address and available evidence. Call your Python package, local model, or other algorithm there and translate its result into `DetectionResult`:
 
 ```python
 from schema import AddressContext, DetectionResult
 
+
 def detect_custom(context: AddressContext) -> DetectionResult:
-    # Invoke your algorithm and translate its output here.
+    # Replace this placeholder with your algorithm and map its output.
     return DetectionResult(
-        label="insufficient_evidence", risk_type="unknown",
-        confidence=0.0, evidence=[],
+        label="insufficient_evidence",
+        risk_type="unknown",
+        confidence=0.0,
+        evidence=[],
     )
 ```
 
-Add your detector's dependencies to `requirements.txt` and supply any model
-weights or configuration it needs. Synchronous detector calls run in FastAPI's
-worker thread pool. Your implementation should be safe for concurrent calls;
-serialize access inside the adapter if your model requires it.
+Add required packages to `requirements.txt` and supply any model weights/configuration your algorithm needs. Map labels explicitly; convert percentage confidence to the 0–1 range only if it actually represents confidence. Missing or failed evidence is not proof of safety.
 
-For a working demonstration, replace the `detect_custom` implementation with:
+For an immediate demonstration, replace the `detect_custom()` function definition with this import, leaving the `detect()` dispatcher in place:
 
 ```python
 from examples.heuristic import detect as detect_custom
 ```
 
-Restart the server and send `examples/context.json` again. It returns `scam`
-with risk type `rug_pull` when an explicitly unverified contract has a pool
-with zero liquidity and a recorded removal event. Otherwise it returns
-`insufficient_evidence`. This is illustrative logic, not a validated model;
-it does not establish the timing or percentage of a liquidity removal.
+Restart and resend `examples/context.json`. The example reports `scam` / `rug_pull` when the context explicitly identifies an unverified contract and a zero-liquidity pool with a recorded removal event. Otherwise it reports insufficient evidence. This is illustrative logic, not a validated model or proof of a rug pull's timing or size.
 
-The wrapper calls `detect_custom()` by default, so users who do not want an LLM
-can keep their own algorithm, package, CLI, or detector configuration there.
-Set `DETECTOR_MODE=custom` explicitly if preferred. The JSON registration file
-is consumed by ChainGuard and does not need to contain LLM settings.
+### Apply code and dependency changes
 
-### Package or source code
-
-Import your package inside `detector.py`, call it using `context.address`,
-`context.chain`, or `context.model_dump()`, and map its native output to
-`DetectionResult`. Map labels explicitly and convert percentage scores to
-the 0–1 range. Do not assume every detector's score represents confidence.
-
-### CLI tool
-
-For a tool that accepts JSON on standard input and emits JSON on standard output:
-
-```python
-import json
-import subprocess
-from schema import AddressContext, DetectionResult
-
-def detect(context: AddressContext) -> DetectionResult:
-    result = subprocess.run(
-        ["your-detector", "--json"],
-        input=context.model_dump_json(), text=True,
-        capture_output=True, check=True, timeout=30,
-    )
-    native = json.loads(result.stdout)
-    # This direct validation works only if the CLI emits the standard schema.
-    # Otherwise translate native fields/labels into DetectionResult here.
-    return DetectionResult.model_validate(native)
-```
-
-Adapt command arguments to the actual tool. Use an argument list and keep
-`shell=False` (the default). Failures/timeouts become HTTP 500, not a safe verdict.
-
-### Standalone model
-
-Load the model once in `detector.py`, preprocess the supplied context, run
-inference in `detect()`, then translate its prediction and evidence to the
-standard result. Document required weights, hardware, and dependencies in your
-copy of this README. Python detector execution has no built-in hard timeout;
-configure HTTP timeouts in the caller and bound expensive work in your adapter.
-
-### User-owned LLM or Lambda
-
-`is_llm_based` is registration metadata for ChainGuard. To use a user-owned
-LLM, expose it over HTTPS (for example, API Gateway invoking a Lambda), then
-set the wrapper mode to LLM:
-
-Configure the wrapper process with server-side environment variables before
-starting it:
+For ChainGuard-managed Docker, run from `ChainGuard/`:
 
 ```powershell
-$env:LLM_DETECTOR_ENDPOINT = "https://example.execute-api.us-east-1.amazonaws.com/prod/detect"
-$env:LLM_DETECTOR_API_KEY = "replace-with-a-secret"
-$env:LLM_DETECTOR_TIMEOUT = "30"
+docker compose restart detector
+```
+
+Source is mounted, but automatic Python reload is off. If requirements changed, use `docker compose up -d --build detector` instead. When ChainGuard uses the local LLM shared-network override, include the same two `-f` options used to start it.
+
+For native use, press Ctrl+C and start the server again; reinstall requirements when dependencies change. For standalone Docker, rebuild and rerun the image. To develop with a standalone source mount instead:
+
+```powershell
+docker run --rm --name chainguard-detector -p 127.0.0.1:9000:9000 --mount "type=bind,source=$($PWD.Path),target=/app" chainguard-detector
+```
+
+This PowerShell command mounts the current template folder. On macOS/Linux, replace the `--mount` argument with `-v "$PWD:/app"`. Restart the container after edits.
+
+## 4. Connect to ChainGuard
+
+Start ChainGuard and sign in as admin. Open **Settings > External Detector** and enter:
+
+| Field | Value |
+| --- | --- |
+| Enabled | On |
+| Name | Any descriptive name, such as `My template detector` |
+| Endpoint | Choose the URL below for your setup |
+| Mode | `template` |
+| Required Input Type | `address_with_context` if you need ChainGuard's fetched evidence |
+| LLM Based | Off for a normal algorithm; on only for an LLM detector supplying its own explanation |
+
+| Where services run | Endpoint seen by the ChainGuard backend |
+| --- | --- |
+| ChainGuard's Compose stack, including its detector service | `http://detector:9000/detect` |
+| Both natively on the same computer | `http://127.0.0.1:9000/detect` |
+| Docker backend, detector on the host | `http://host.docker.internal:9000/detect` (detector must accept connections from Docker) |
+| Remote detector | Your reachable HTTPS URL ending in `/detect` |
+
+Inside a Docker container, `localhost` means that container, not your computer or another service. Native `app.py` binds to loopback by default; set `HOST=0.0.0.0` before startup if it must accept Docker/remote connections, and configure network access appropriately.
+
+Click **Save Changes**, then **Confirm Change**. Saving registers the endpoint; it does not start or test it. Ask ChainGuard to assess a complete Ethereum address and inspect the result and service logs. The unchanged stub still reports insufficient evidence.
+
+Choose `address` as the required input type only if your implementation performs its own lookups. Leave mode on `template`; ChainGuard's generic request/response mapping is not implemented. To return to the built-in AI Scam Checker, disable the external detector and save/confirm. Stopping the detector alone causes errors while it remains configured.
+
+`detector_config_example.json` illustrates registration for **ChainGuard**; this wrapper does not read it. Prefer the web settings so ChainGuard saves to the correct location (its Docker data volume or native backend configuration file).
+
+## Optional authentication and configuration
+
+By default, detector requests require no key. To enable authentication for a native run, set a secret in the detector terminal **before startup**:
+
+```powershell
+$env:DETECTOR_API_KEY = "replace-with-your-own-secret"
+.venv\Scripts\python app.py
+```
+
+Set the same key in ChainGuard's backend environment or under **Settings > API Wrappers > Detector API Key**. The backend sends `X-API-Key`. For a manual test, add `-H "X-API-Key:YOUR_SECRET"` to the curl command. In `/docs`, use **Authorize** to enter it.
+
+With ChainGuard's Compose setup, root `.env` `DETECTOR_API_KEY` is passed to both services. Reapply `docker compose up -d` after changing it. Standalone Docker requires passing environment variables explicitly, for example with `--env-file` referencing a private file you create. Do not bake secrets into images or registration JSON.
+
+| Detector environment variable | Default / purpose |
+| --- | --- |
+| `HOST` | `127.0.0.1` natively; the Docker image sets `0.0.0.0`. |
+| `PORT` | `9000`. |
+| `DETECTOR_API_KEY` | Empty: authentication disabled. Protects `/detect`; `/health` and `/docs` remain public. |
+| `DETECTOR_MODE` | `custom`: calls `detect_custom()`. `llm` selects the forwarding adapter below. |
+| `LLM_DETECTOR_ENDPOINT` | Required in `llm` mode: upstream URL accepting context and returning a detector result. |
+| `LLM_DETECTOR_API_KEY` | Optional upstream `X-API-Key`; separate from the key protecting this service. |
+| `LLM_DETECTOR_TIMEOUT` | Upstream request timeout in seconds; default `30`. |
+
+Native runs do not automatically load `.env` files. On macOS/Linux, use `export NAME='value'` instead of `$env:NAME = "value"`. ChainGuard's Compose file passes only its listed environment entries; add detector environment entries or an override file for settings beyond its existing `HOST`, `PORT`, and `DETECTOR_API_KEY`.
+
+## Other integration examples
+
+### Your own LLM or Lambda endpoint
+
+The optional adapter forwards context to a detector endpoint you operate. This is a detector-result API, **not** a raw OpenAI-compatible chat endpoint and not the local LLM hosting template.
+
+For native use, configure before startup:
+
+```powershell
 $env:DETECTOR_MODE = "llm"
-python app.py
+$env:LLM_DETECTOR_ENDPOINT = "https://your-service.example.com/detect"
+$env:LLM_DETECTOR_TIMEOUT = "30"
+# Set LLM_DETECTOR_API_KEY too if the upstream endpoint requires X-API-Key.
+.venv\Scripts\python app.py
 ```
 
-The adapter sends the same `AddressContext` JSON that ChainGuard sent to
-`/detect`. The Lambda response must be a JSON object with `label`, `risk_type`,
-`confidence`, and `evidence`, plus optional `explanation`. The adapter validates
-that response and returns HTTP 500 for an unavailable endpoint or malformed
-model output; it never converts an LLM failure into a safe verdict.
+The upstream receives the same `AddressContext` JSON and must return a `DetectionResult`, including an explanation for ChainGuard's LLM-based handling. `examples/lambda_handler.py` illustrates API Gateway event handling; implement its `invoke_user_llm()` function and authenticate the deployed endpoint separately. Register **this wrapper's `/detect` URL** in ChainGuard and turn **LLM Based** on. Upstream failures do not fall back to the custom stub.
 
-See `examples/lambda_handler.py` for an API Gateway event handler. Replace its
-`invoke_user_llm()` function with the user's model call and map the model output
-to the standard result fields before returning it.
+### Packages, CLI tools, and local models
 
-Register the wrapper endpoint in ChainGuard, not the Lambda endpoint, and set
-`is_llm_based` to `true` because this detector supplies its own explanation:
+Import a package or load a model once in `detector.py`, call it from `detect_custom()`, and translate its output. For a CLI, use `subprocess.run()` with an argument list, JSON input/output, `check=True`, an explicit timeout, and the default `shell=False`. Keep weights and deployment requirements documented in your fork.
 
-```json
-{
-  "enabled": true,
-  "name": "MyCustomLLMDetector",
-  "endpoint": "https://your-wrapper.example.com/detect",
-  "mode": "template",
-  "required_input_type": "address_with_context",
-  "is_llm_based": true
-}
-```
+### Honeypot and RugCheck adapters
 
-The Lambda should authenticate the wrapper separately (for example with an API
-key, IAM-backed API Gateway authorization, or a signed request). Do not put its
-secret in `detector_config.json` or in the request context. If the LLM returns
-a provider-specific shape, map it in `detector.py` or in the Lambda before
-returning the result.
-
-When `DETECTOR_MODE` is omitted or set to `custom`, the LLM endpoint is never
-called and `detect_custom()` handles the request instead.
-
-## Contract
-
-`schema.py` defines the local Pydantic wire models; no ChainGuard package is
-required. The request body is the context object itself, with no envelope.
-
-- `address`: required nonblank string; `chain` defaults to `ethereum`.
-- Optional context: `queried_at`, `contract`, `tx_history`, `tokens`, `liquidity`,
-  and `fetcher_provenance`. `address_analysis` is also accepted for compatibility.
-- Missing context sections default to empty collections. Missing or failed
-  fetches are not proof that an address is safe; inspect provenance where needed.
-- Result: `label` (`scam`, `not_scam`, or `insufficient_evidence`), `risk_type`,
-  `confidence` (0–1), and `evidence` (items with `description` and `weight`, 0–1).
-- Optional `explanation` supports detectors that supply their own rationale.
-  When unset, it is omitted from HTTP output to preserve the core result shape.
-
-Invalid requests return 422. Invalid detector results and execution exceptions
-return a generic 500; diagnostic details go to the server log. A failed detector
-is never silently converted into `not_scam` or `insufficient_evidence`.
-The schemas are based on SPEC.md; coordinate future schema changes with
-ChainGuard. Automatic shared-schema distribution is not part of this starter kit.
-
-## Authentication and deployment
-
-Authentication is optional. To require an API key, set it before starting:
-
-```powershell
-$env:DETECTOR_API_KEY = "replace-with-your-secret"
-python app.py
-```
-
-Then send `X-API-Key` on `/detect` requests. Missing/wrong keys return 401.
-The health endpoint and API docs remain public. Environment variables are read
-directly; `.env` files are not automatically loaded.
-
-`HOST` defaults to `127.0.0.1`; `PORT` defaults to `9000`. The Docker image sets
-`HOST=0.0.0.0` so other containers can reach it. For non-Docker remote
-deployment, set `HOST=0.0.0.0` and configure HTTPS at your hosting service or
-reverse proxy. ChainGuard must be able to reach the deployed URL; `localhost`
-refers to the caller's own machine/container.
-
-## Configure in ChainGuard
-
-`detector_config.json` is an example registration for the consuming app; the
-wrapper does not read it. It starts disabled to avoid treating the stub as a
-real detector. After deploying your implementation, register its endpoint in
-ChainGuard and enable it:
-
-```json
-{
-  "enabled": true,
-  "name": "MyTemplateDetector",
-  "endpoint": "http://127.0.0.1:9000/detect",
-  "mode": "template",
-  "required_input_type": "address_with_context",
-  "is_llm_based": false
-}
-```
-
-Use `required_input_type: "address"` if your detector only needs address/chain
-and does its own lookups. Both use the same `/detect` request schema. Use
-`is_llm_based: true` only when your detector supplies its own explanation.
-Template mode needs no response mapping because the result follows the contract.
-If API-key auth is enabled, the caller must send the configured `X-API-Key`.
-Keep secrets in the caller's server-side configuration.
-
-Existing external APIs can instead use ChainGuard's generic connector with
-native parameters, authentication, and response mapping; they do not need this
-wrapper. ChainGuard's outbound connector/admin configuration implementation is
-a separate task. This starter kit does not add those capabilities to ChainGuard.
-The previous `/analyse`, `/configuration`, and `/resolve-contract-address`
-routes have been removed; input fetching/resolution belongs in the caller.
-
-## External API wrapper examples: Honeypot and RugCheck
-
-These examples illustrate response normalization behind the template API. For
-an existing API, the intended default is for ChainGuard's **generic connector**
-to call it directly using configured request/auth/response mappings. A wrapper
-is useful if translation requires conditional logic the generic mapper cannot
-express, or if you want one standard API contract. Both paths fit the architecture;
-wrapping an existing API is optional. The generic connector is separate app work.
-
-To try a wrapper, replace `detector.py` with **one** of these imports and restart:
+To try one example, replace the `detect_custom()` definition with **one** import, preserving the dispatcher:
 
 ```python
-from examples.honeypot import detect
+from examples.honeypot import detect as detect_custom
 ```
+
+Or:
 
 ```python
-from examples.rugcheck import detect
+from examples.rugcheck import detect as detect_custom
 ```
 
-Install `requirements.txt` again if your environment does not have `httpx`.
-Send a real **token** address to `/detect`, not a wallet address:
+Restart the service. These adapters call live third-party APIs and need internet access. Register as `template`, required input `address`, and LLM Based off.
 
-```json
-{"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "chain": "ethereum"}
-```
+- **Honeypot:** requires an Ethereum token contract, not a wallet, and sends chain ID 1. An explicit honeypot verdict maps to `scam` / `honeypot`; false or missing maps to insufficient evidence, since other scams are not ruled out.
+- **RugCheck:** requires a Solana token mint and `chain: solana`. Danger findings map to `scam` / `token_risk` by the example's local policy, not a provider-confirmed scam verdict. This example does not add Solana fetching or resolution to ChainGuard.
+- Both keep numeric confidence and evidence weights at `0.0` as placeholders for unavailable confidence, not calibrated estimates. Review `map_result()` before adopting either policy. HTTP failures and malformed responses are errors, not safe verdicts.
 
-For the RugCheck example, send a Solana token mint and explicitly use
-`"chain": "solana"`. This does not add Solana resolution/fetchers to ChainGuard.
-The Honeypot example intentionally supports Ethereum only, and sends `chainID=1`
-instead of letting the provider guess the network. Configure either wrapper in
-ChainGuard as `mode: template`, `required_input_type: address`,
-`is_llm_based: false`; point the endpoint at **your wrapper's** `/detect` URL.
+## Troubleshooting
 
-Mapping policy (inspect/change `map_result()` for your integration):
+| Problem | What to check |
+| --- | --- |
+| Port 9000 already used | Stop the other detector process or change your published/native port and ChainGuard endpoint together. |
+| Health works, detection fails | Health only checks the process. Send the example POST and inspect the server log. |
+| 401 on `/detect` | Match `DETECTOR_API_KEY` on caller and server; include `X-API-Key` in manual requests. |
+| 422 | Request does not match `AddressContext`; send the context object directly, without a wrapper. |
+| 500 | Algorithm exception, invalid result, or upstream error; inspect the detector terminal/container log. |
+| Code edits have no effect | Restart the process; rebuild dependencies or standalone images when required. |
+| ChainGuard cannot connect | Use a URL reachable from the backend, including the correct Docker service/host address. |
+| Always insufficient evidence | Implement the placeholder, or check whether your algorithm has enough input evidence. |
 
-- Honeypot `isHoneypot: true` maps to `scam` / `honeypot`. False or missing maps
-  to `insufficient_evidence`: absence of a honeypot is not absence of all scams.
-  A verdict may exist even when simulation failed, so the adapter uses the
-  explicit verdict rather than relying on `simulationSuccess` alone.
-- RugCheck `danger` findings map to `scam` / `token_risk` by an **example local
-  policy**, not a provider-confirmed scam/rug-pull verdict. Other findings remain
-  `insufficient_evidence`; all risk descriptions and levels are kept as evidence.
-- Neither adapter derives confidence from risk scores. `confidence` and evidence
-  `weight` are `0.0` placeholders for unavailable values, not calibrated estimates.
-  A future shared contract could represent unavailable confidence as `null`.
-- HTTP errors, timeouts, invalid JSON and malformed fields raise exceptions,
-  which the wrapper reports as HTTP 500. They are not successful safe verdicts.
-  Unsupported chains/invalid address syntax also fail before a network request.
+For ChainGuard Docker logs, run `docker compose logs --tail 100 detector backend` from `ChainGuard/`, using any override files from your startup command.
 
-No prompts, JSON file writes, folder clearing, or network calls occur on import.
-Provider references: [Honeypot API](https://docs.honeypot.is/ishoneypot) and
-[RugCheck API schema](https://api.rugcheck.xyz/swagger/doc.json).
+## Testing and architecture
 
-## Test
+From this template folder:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q
 ```
+
+Create the environment as in the native setup if needed. The current tests cover wrapper health/default detection, external API mappings, chain validation, and upstream failures using mocked requests. Use the example POST above to check the running wrapper and a ChainGuard scam request to check the full integration.
+
+```text
+ChainGuard -> POST /detect -> validate AddressContext
+  -> detector.detect()
+       custom mode -> detect_custom() -> your algorithm
+       llm mode    -> your upstream detector endpoint
+  -> validate DetectionResult -> return JSON
+```
+
+`schema.py` is the local wire contract; no ChainGuard Python package is required. Coordinate schema changes with the consuming app.
+
+| Model | Fields |
+| --- | --- |
+| `AddressContext` | Required nonblank `address`; `chain` defaults to `ethereum`. Optional `queried_at`, `address_analysis`, `contract`, `tx_history`, `tokens`, `liquidity`, and `fetcher_provenance`. Missing evidence collections default to empty. |
+| `DetectionResult` | `label`: `scam`, `not_scam`, or `insufficient_evidence`; nonblank `risk_type`; finite `confidence` from 0–1; `evidence`: objects with nonblank `description` and finite `weight` from 0–1; optional `explanation`. |
+
+Invalid requests return 422. Execution failures or invalid results return a generic 500 with diagnostic details in the server log. Unset explanations are omitted from responses. The service has `/health`, `/detect`, and `/docs`; there are no `/analyse`, `/configuration`, or `/resolve-contract-address` routes.
+
+Synchronous detection runs in FastAPI's worker thread pool. Make your implementation safe for concurrent calls. Python algorithm execution has no built-in hard timeout; bound expensive work in your adapter. ChainGuard's current detector HTTP client waits up to 60 seconds. For remote hosting, configure HTTPS and access controls at your deployment boundary.
